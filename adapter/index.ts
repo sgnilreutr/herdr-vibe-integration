@@ -5,17 +5,24 @@
  * When not running in Herdr, it simply execs the vibe CLI.
  */
 
-const { spawn } = require('child_process');
-const { existsSync } = require('fs');
-const path = require('path');
-const os = require('os');
+import { spawn, ChildProcess, SpawnOptions } from 'child_process';
 
 // Configuration
 const SOURCE = 'custom:vibe';
 const AGENT = 'vibe';
 
+// Valid agent states
+type AgentState = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
+
+// Herdr environment variables
+interface HerdrEnv {
+  paneId: string;
+  herdrBin: string;
+  socketPath?: string;
+}
+
 // State patterns for detecting Vibe's state from output
-const STATE_PATTERNS = {
+const STATE_PATTERNS: Record<AgentState, RegExp[]> = {
   idle: [
     // Vibe's input prompt patterns
     /^[>\$] /,
@@ -64,28 +71,29 @@ const STATE_PATTERNS = {
     /^Finished/i,
     /^Complete/i,
   ],
+  unknown: [],
 };
 
 // Current state tracking
-let currentState = 'idle';
+let currentState: AgentState = 'idle';
 let sequenceNumber = 0;
 
 /**
  * Check if we're running inside Herdr
  */
-function isInHerdr() {
-  return process.env.HERDR_ENV === '1' &&
-         process.env.HERDR_PANE_ID &&
-         process.env.HERDR_BIN_PATH;
+function isInHerdr(): boolean {
+  return (process.env.HERDR_ENV === '1') &&
+         Boolean(process.env.HERDR_PANE_ID) &&
+         Boolean(process.env.HERDR_BIN_PATH);
 }
 
 /**
  * Get Herdr environment variables
  */
-function getHerdrEnv() {
+function getHerdrEnv(): HerdrEnv {
   return {
-    paneId: process.env.HERDR_PANE_ID,
-    herdrBin: process.env.HERDR_BIN_PATH,
+    paneId: process.env.HERDR_PANE_ID || '',
+    herdrBin: process.env.HERDR_BIN_PATH || '',
     socketPath: process.env.HERDR_SOCKET_PATH,
   };
 }
@@ -93,7 +101,7 @@ function getHerdrEnv() {
 /**
  * Report agent state to Herdr via CLI
  */
-function reportState(state, message = '') {
+function reportState(state: AgentState, message: string = ''): void {
   const { paneId, herdrBin } = getHerdrEnv();
   
   // Only report if state actually changed
@@ -104,7 +112,7 @@ function reportState(state, message = '') {
   currentState = state;
   sequenceNumber++;
   
-  const args = [
+  const args: string[] = [
     'pane', 'report-agent', paneId,
     '--source', SOURCE,
     '--agent', AGENT,
@@ -117,33 +125,39 @@ function reportState(state, message = '') {
   }
   
   try {
-    spawn(herdrBin, args, { stdio: 'ignore', detached: true });
-  } catch (err) {
+    const proc = spawn(herdrBin, args, { stdio: 'ignore', detached: true });
+    proc.unref();
+  } catch (err: unknown) {
     // Silently ignore errors - Herdr might not be available
+    const error = err as Error;
+    console.error(`[herdr-vibe] State report failed: ${error.message}`);
   }
 }
 
 /**
  * Release agent on exit
  */
-function releaseAgent() {
+function releaseAgent(): void {
   const { paneId, herdrBin } = getHerdrEnv();
   
   try {
-    spawn(herdrBin, [
+    const proc = spawn(herdrBin, [
       'pane', 'release-agent', paneId,
       '--source', SOURCE,
       '--agent', AGENT,
     ], { stdio: 'ignore', detached: true });
-  } catch (err) {
+    proc.unref();
+  } catch (err: unknown) {
     // Silently ignore
+    const error = err as Error;
+    console.error(`[herdr-vibe] Release failed: ${error.message}`);
   }
 }
 
 /**
  * Detect state from a line of output
  */
-function detectState(line) {
+function detectState(line: string): AgentState | null {
   // Check blocked patterns first (highest priority)
   for (const pattern of STATE_PATTERNS.blocked) {
     if (pattern.test(line)) {
@@ -179,7 +193,7 @@ function detectState(line) {
 /**
  * Process a chunk of output from Vibe
  */
-function processOutput(chunk, vibeProcess) {
+function processOutput(chunk: Buffer): void {
   const text = chunk.toString();
   const lines = text.split('\n');
   
@@ -197,9 +211,20 @@ function processOutput(chunk, vibeProcess) {
 }
 
 /**
+ * Spawn Vibe process with proper configuration
+ */
+function spawnVibe(args: string[]): ChildProcess {
+  const spawnOptions: SpawnOptions = {
+    stdio: ['inherit', 'pipe', 'pipe'],
+  };
+  
+  return spawn('vibe', args, spawnOptions);
+}
+
+/**
  * Main function
  */
-function main() {
+function main(): void {
   // Check if we're in Herdr
   if (!isInHerdr()) {
     // Not in Herdr - just exec vibe
@@ -207,19 +232,19 @@ function main() {
       stdio: 'inherit',
     });
     
-    vibe.on('error', (err) => {
-      console.error('Failed to start vibe:', err.message);
+    vibe.on('error', (err: Error) => {
+      console.error('[herdr-vibe] Failed to start vibe:', err.message);
       process.exit(1);
     });
     
-    vibe.on('exit', (code) => {
+    vibe.on('exit', (code: number | null) => {
       process.exit(code || 0);
     });
     
     return;
   }
   
-  console.log(`[herdr-vibe] Running in Herdr pane: ${getHerdrEnv().paneId}`);
+  console.error(`[herdr-vibe] Running in Herdr pane: ${getHerdrEnv().paneId}`);
   
   // Set up cleanup
   process.on('exit', releaseAgent);
@@ -237,52 +262,27 @@ function main() {
   
   // Spawn Vibe with arguments
   const args = process.argv.slice(2);
+  const vibe = spawnVibe(args);
   
-  // If no arguments and stdin is a TTY, run in interactive mode
-  // Otherwise, add --prompt to force programmatic mode
-  if (args.length === 0 && process.stdin.isTTY) {
-    // Interactive mode - just run vibe
-    const vibe = spawn('vibe', args, {
-      stdio: ['inherit', 'pipe', 'pipe'],
-    });
-    
-    // Forward stdout and stderr
-    vibe.stdout.on('data', (chunk) => processOutput(chunk, vibe));
-    vibe.stderr.on('data', (chunk) => {
+  // Forward stdout and stderr
+  if (vibe.stdout) {
+    vibe.stdout.on('data', processOutput);
+  }
+  if (vibe.stderr) {
+    vibe.stderr.on('data', (chunk: Buffer) => {
       process.stderr.write(chunk);
-    });
-    
-    vibe.on('error', (err) => {
-      console.error('Vibe error:', err.message);
-      reportState('idle', 'Error: ' + err.message);
-    });
-    
-    vibe.on('exit', (code) => {
-      reportState('done', `Exited with code ${code}`);
-      process.exit(code || 0);
-    });
-  } else {
-    // Programmatic mode
-    args.unshift('-p');
-    const vibe = spawn('vibe', args, {
-      stdio: ['inherit', 'pipe', 'pipe'],
-    });
-    
-    vibe.stdout.on('data', (chunk) => processOutput(chunk, vibe));
-    vibe.stderr.on('data', (chunk) => {
-      process.stderr.write(chunk);
-    });
-    
-    vibe.on('error', (err) => {
-      console.error('Vibe error:', err.message);
-      reportState('idle', 'Error: ' + err.message);
-    });
-    
-    vibe.on('exit', (code) => {
-      reportState('done', `Exited with code ${code}`);
-      process.exit(code || 0);
     });
   }
+  
+  vibe.on('error', (err: Error) => {
+    console.error('[herdr-vibe] Vibe error:', err.message);
+    reportState('idle', 'Error: ' + err.message);
+  });
+  
+  vibe.on('exit', (code: number | null) => {
+    reportState('done', `Exited with code ${code}`);
+    process.exit(code || 0);
+  });
 }
 
 // Run main
