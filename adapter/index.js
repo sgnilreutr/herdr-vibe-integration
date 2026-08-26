@@ -34,12 +34,10 @@ const STATE_PATTERNS = {
     /^Analyzing/i,
     /^Working/i,
     // Spinners and progress indicators
-    /^[|/-\\]/,
+    /^[|/\\-]/,
     /^[▰▱▱▱|▱▰▱▱|▱▱▰▱|▱▱▱▰]/,
     /^[▉▊]/,
     /^\.\.\./,
-    // Streaming output (token by token)
-    /^[a-zA-Z]/, // Simple heuristic: output without prompt
   ],
   blocked: [
     // Permission/confirmation prompts
