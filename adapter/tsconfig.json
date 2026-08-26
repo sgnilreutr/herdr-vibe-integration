@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "outDir": "./dist",
     "rootDir": ".",
     "strict": true,
@@ -19,10 +19,7 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "allowSyntheticDefaultImports": true,
-    "baseUrl": ".",
-    "paths": {
-      "*": ["node_modules/*"]
-    }
+    "types": ["node"]
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist"]

@@ -9,11 +9,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node index.ts",
+    "dev": "node --import tsx index.ts",
     "test": "node --test"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "keywords": [
     "herdr",
@@ -26,11 +26,11 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "node-pty": "^1.0.0",
-    "ts-node": "^10.9.2"
+    "node-pty": "1.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.9.0",
-    "typescript": "^5.6.3"
+    "@types/node": "26.3.0",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
   }
 }
