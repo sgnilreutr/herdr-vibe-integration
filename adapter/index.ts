@@ -193,34 +193,52 @@ function detectState(line: string): AgentState | null {
 }
 
 /**
- * Process a chunk of output from Vibe
+ * Strip ANSI escape codes from text
  */
-function processOutput(chunk: Buffer): void {
-  const text = chunk.toString();
-  const lines = text.split('\n');
-
-  for (const line of lines) {
-    if (!line.trim()) continue;
-
-    const detected = detectState(line);
-    if (detected) {
-      reportState(detected, line);
-    }
-  }
-
-  // Forward output to stdout (so user sees it in Herdr)
-  process.stdout.write(chunk);
+function stripAnsiCodes(text: string): string {
+  // Match common ANSI escape sequences
+  // ESC [ ... letter (CSI sequences like \x1b[31m, \x1b[?1049h, \x1b[>25u)
+  // ESC ] ... BEL (OSC sequences like \x1b]22;default\x07)
+  // ESC other sequences
+  // First pass: CSI sequences (ESC [ ... final_byte) - final_byte is in range 64-126
+  let result = text.replace(/\x1b\[[\x20-\x3F]*[\x40-\x7E]/g, '');
+  // Second pass: OSC sequences (ESC ] ... BEL)
+  result = result.replace(/\x1b\][^\x07]*\x07/g, '');
+  // Third pass: Any ESC followed by a control character
+  result = result.replace(/\x1b[\x00-\x1F\x7F]/g, '');
+  return result;
 }
+
+
 
 /**
  * Spawn Vibe process with proper configuration
+ * 
+ * Key insight: Vibe CLI has two modes:
+ * - Interactive mode (no -p flag): starts Textual TUI which reads from terminal, not stdin
+ * - Programmatic mode (-p flag): runs without TUI, reads prompt from args or stdin
+ * 
+ * IMPORTANT: When using programmatic mode (-p), Vibe still tries to read from stdin
+ * via get_prompt_from_stdin() if stdin is a pipe. We use stdio: ['ignore', 'pipe', 'pipe']
+ * to prevent Vibe from reading from stdin, forcing it to use only the -p argument.
+ * 
+ * To avoid TUI issues in Herdr, we force programmatic mode by always passing -p with the prompt.
  */
-function spawnVibe(args: string[]): ChildProcess {
+function spawnVibe(prompt: string): ChildProcess {
   const spawnOptions: SpawnOptions = {
-    stdio: ['inherit', 'pipe', 'pipe'],
+    // Use 'ignore' for stdin to prevent Vibe from reading from it
+    // Vibe's get_prompt_from_stdin() will see stdin as not readable and skip it
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      TERM: 'dumb',
+      NO_COLOR: '1',
+    },
   };
 
-  return spawn('vibe', args, spawnOptions);
+  // Always use programmatic mode to avoid TUI
+  // Pass prompt via -p flag
+  return spawn('vibe', ['-p', prompt, '--output', 'text'], spawnOptions);
 }
 
 /**
@@ -262,29 +280,114 @@ function main(): void {
   // Report initial state
   reportState('idle', 'Vibe starting...');
 
-  // Spawn Vibe with arguments
-  const args = process.argv.slice(2);
-  const vibe = spawnVibe(args);
+  // Manage conversation loop for Herdr
+  // Herdr sends input to our stdin, we read it and pass to Vibe in programmatic mode
+  // This avoids the TUI entirely
+  
+  // Read from stdin line by line
+  const stdinBuffer: string[] = [];
+  let currentVibe: ChildProcess | null = null;
+  let isProcessing = false;
 
-  // Forward stdout and stderr
-  if (vibe.stdout) {
-    vibe.stdout.on('data', processOutput);
-  }
-  if (vibe.stderr) {
-    vibe.stderr.on('data', (chunk: Buffer) => {
-      process.stderr.write(chunk);
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk: string) => {
+    const lines = chunk.split('\n');
+    for (const line of lines) {
+      if (line.trim()) {
+        stdinBuffer.push(line);
+        processLine();
+      }
+    }
+  });
+
+  // Handle EOF (pipe closed)
+  process.stdin.on('end', () => {
+    // If there's buffered input, process it
+    if (stdinBuffer.length > 0) {
+      processLine();
+    } else if (!isProcessing && currentVibe === null) {
+      // No input and not processing - just exit
+      reportState('idle', 'No input received');
+      process.exit(0);
+    }
+  });
+
+  function processLine(): void {
+    // If already processing, wait for current request to finish
+    if (isProcessing || stdinBuffer.length === 0) {
+      return;
+    }
+
+    isProcessing = true;
+    const prompt = stdinBuffer.shift()!;
+    
+    reportState('working', `Processing: ${prompt.substring(0, 50)}`);
+    
+    // Spawn Vibe in programmatic mode with the prompt
+    currentVibe = spawnVibe(prompt);
+
+    let outputBuffer = '';
+    let hasDetectedState = false;
+
+    // Collect output from Vibe
+    if (currentVibe.stdout) {
+      currentVibe.stdout.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        outputBuffer += text;
+        
+        // Try to detect state from output lines
+        if (!hasDetectedState) {
+          const lines = text.split('\n');
+          for (const line of lines) {
+            if (line.trim()) {
+              const detected = detectState(line);
+              if (detected) {
+                reportState(detected, line);
+                hasDetectedState = true;
+                break;
+              }
+            }
+          }
+        }
+      });
+    }
+    if (currentVibe.stderr) {
+      currentVibe.stderr.on('data', (chunk: Buffer) => {
+        // Forward stderr immediately (might contain errors)
+        const cleanText = stripAnsiCodes(chunk.toString());
+        if (cleanText.trim()) {
+          process.stderr.write(cleanText);
+        }
+      });
+    }
+
+    currentVibe.on('error', (err: Error) => {
+      console.error('[herdr-vibe] Vibe error:', err.message);
+      reportState('idle', 'Error: ' + err.message);
+      isProcessing = false;
+      currentVibe = null;
+      // Try to process next line
+      processLine();
+    });
+
+    currentVibe.on('exit', () => {
+      // Strip ANSI codes and forward the complete output
+      const cleanOutput = stripAnsiCodes(outputBuffer);
+      if (cleanOutput.trim()) {
+        process.stdout.write(cleanOutput);
+      }
+      
+      reportState('idle', 'Ready for next input');
+      isProcessing = false;
+      currentVibe = null;
+      
+      // Process next line if available
+      processLine();
     });
   }
 
-  vibe.on('error', (err: Error) => {
-    console.error('[herdr-vibe] Vibe error:', err.message);
-    reportState('idle', 'Error: ' + err.message);
-  });
-
-  vibe.on('exit', (code: number | null) => {
-    reportState('done', `Exited with code ${code}`);
-    process.exit(code || 0);
-  });
+  // Handle initial input if any
+  process.stdin.resume();
 }
 
 // Run main
