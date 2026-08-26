@@ -1,0 +1,32 @@
+# Herdr Integration Hooks for Mistral Vibe
+# 
+# This file configures Vibe to call our Herdr state reporter on various events.
+# Place this file in ~/.vibe/hooks.toml
+#
+# Installation:
+#   1. Copy this file to ~/.vibe/hooks.toml
+#   2. Copy herdr-agent-state.py to ~/.vibe/herdr-agent-state.py
+#   3. Make it executable: chmod +x ~/.vibe/herdr-agent-state.py
+#
+# Herdr will then automatically detect Vibe and show its state in the sidebar.
+
+[[hooks]]
+name = "herdr-post-agent"
+type = "post_agent"
+command = "python3 ~/.vibe/herdr-agent-state.py"
+timeout = 5.0
+description = "Report agent state to Herdr after each response"
+
+[[hooks]]
+name = "herdr-pre-tool"
+type = "pre_tool"
+command = "python3 ~/.vibe/herdr-agent-state.py"
+timeout = 5.0
+description = "Report tool start to Herdr"
+
+[[hooks]]
+name = "herdr-post-tool"
+type = "post_tool"
+command = "python3 ~/.vibe/herdr-agent-state.py"
+timeout = 5.0
+description = "Report tool completion to Herdr"
