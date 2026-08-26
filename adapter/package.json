@@ -1,0 +1,30 @@
+{
+  "name": "herdr-vibe-integration",
+  "version": "0.1.0",
+  "description": "Herdr integration adapter for Mistral Vibe",
+  "main": "index.js",
+  "bin": {
+    "vibe-herdr": "./vibe-herdr.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "herdr",
+    "vibe",
+    "mistral",
+    "agent",
+    "integration"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+  }
+}

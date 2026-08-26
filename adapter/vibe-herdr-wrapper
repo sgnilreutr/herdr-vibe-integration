@@ -1,0 +1,56 @@
+#!/bin/bash
+# Mistral Vibe Herdr Integration Wrapper
+# This script wraps Mistral Vibe to integrate with Herdr
+# When running inside Herdr, it reports agent state; otherwise, it runs Vibe normally
+
+set -euo pipefail
+
+# Check if we're running inside Herdr
+if [ "${HERDR_ENV:-}" != "1" ]; then
+    # Not in Herdr, just run Vibe normally
+    exec vibe "$@"
+fi
+
+# We're in Herdr! Set up integration
+PANE_ID="${HERDR_PANE_ID:?}"
+HERDR_BIN="${HERDR_BIN_PATH:?}"
+SOURCE="custom:vibe"
+AGENT="vibe"
+
+# Function to report agent state
+report_state() {
+    local state="$1"
+    local message="${2:-}"
+    
+    if [ -n "$message" ]; then
+        "$HERDR_BIN" pane report-agent "$PANE_ID" \
+            --source "$SOURCE" \
+            --agent "$AGENT" \
+            --state "$state" \
+            --message "$message"
+    else
+        "$HERDR_BIN" pane report-agent "$PANE_ID" \
+            --source "$SOURCE" \
+            --agent "$AGENT" \
+            --state "$state"
+    fi
+}
+
+# Function to release agent
+release_agent() {
+    "$HERDR_BIN" pane release-agent "$PANE_ID" \
+        --source "$SOURCE" \
+        --agent "$AGENT"
+}
+
+# Trap exit to release agent
+trap release_agent EXIT
+
+# Report initial state as idle
+report_state "idle" "Vibe ready"
+
+# Run Vibe with all arguments
+# Note: Vibe will handle its own I/O through the TTY provided by Herdr
+vibe "$@"
+
+# When Vibe exits, the trap will call release_agent
