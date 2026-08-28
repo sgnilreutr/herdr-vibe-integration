@@ -28,8 +28,11 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
+import time
+import uuid
 from typing import Any
 
 # --- Configuration ---
@@ -46,72 +49,100 @@ def get_herdr_env() -> dict[str, str | None]:
     }
 
 
-def report_state(state: str, message: str = "") -> None:
-    """Report agent state to Herdr via CLI."""
+def send_to_herdr(method: str, params: dict[str, Any]) -> bool:
+    """Send a JSON-RPC request to Herdr via Unix socket or CLI fallback."""
     env = get_herdr_env()
+    socket_path = env["socket_path"]
     pane_id = env["pane_id"]
     herdr_bin = env["herdr_bin"]
 
-    if not pane_id or not herdr_bin:
-        return
+    if not pane_id:
+        return False
 
-    args = [
-        herdr_bin,
-        "pane", "report-agent", pane_id,
-        "--source", SOURCE,
-        "--agent", AGENT,
-        "--state", state,
-    ]
+    # Build request
+    request_id = f"{SOURCE}:{int(time.time() * 1000)}:{uuid.uuid4().hex[:6]}"
+    request = {
+        "id": request_id,
+        "method": method,
+        "params": {**params, "pane_id": pane_id, "source": SOURCE, "agent": AGENT},
+    }
+
+    # Try Unix socket first (more reliable, doesn't require HERDR_BIN_PATH)
+    if socket_path:
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(0.5)
+            sock.connect(socket_path)
+            sock.sendall((json.dumps(request) + "\n").encode())
+            # Try to read response (we don't need it, but this prevents blocking)
+            try:
+                sock.recv(4096)
+            except Exception:
+                pass
+            sock.close()
+            return True
+        except Exception:
+            pass  # Fall through to CLI method
+
+    # Fallback to CLI if socket not available
+    if herdr_bin:
+        try:
+            # Map method names to CLI commands
+            if method == "pane.report_agent":
+                args = [
+                    herdr_bin,
+                    "pane", "report-agent", pane_id,
+                    "--source", SOURCE,
+                    "--agent", AGENT,
+                    "--state", params.get("state", "idle"),
+                ]
+                if "message" in params:
+                    args.extend(["--message", params["message"]])
+                subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            elif method == "pane.report_agent_session":
+                args = [
+                    herdr_bin,
+                    "pane", "report-agent-session", pane_id,
+                    "--source", SOURCE,
+                    "--agent", AGENT,
+                ]
+                if "agent_session_id" in params:
+                    args.extend(["--agent-session-id", params["agent_session_id"]])
+                subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            elif method == "pane.release_agent":
+                subprocess.Popen(
+                    [herdr_bin, "pane", "release-agent", pane_id,
+                     "--source", SOURCE, "--agent", AGENT],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def report_state(state: str, message: str = "") -> None:
+    """Report agent state to Herdr."""
+    params: dict[str, Any] = {"state": state}
     if message:
-        args.extend(["--message", message])
-
-    try:
-        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass  # Silently ignore errors
+        params["message"] = message
+    send_to_herdr("pane.report_agent", params)
 
 
 def report_agent_session(session_id: str | None = None) -> None:
     """Report agent session to Herdr."""
-    env = get_herdr_env()
-    pane_id = env["pane_id"]
-    herdr_bin = env["herdr_bin"]
-
-    if not pane_id or not herdr_bin:
-        return
-
-    args = [
-        herdr_bin,
-        "pane", "report-agent-session", pane_id,
-        "--source", SOURCE,
-        "--agent", AGENT,
-    ]
+    params: dict[str, Any] = {}
     if session_id:
-        args.extend(["--agent-session-id", session_id])
-
-    try:
-        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+        params["agent_session_id"] = session_id
+    send_to_herdr("pane.report_agent_session", params)
 
 
 def release_agent() -> None:
     """Release agent from Herdr."""
-    env = get_herdr_env()
-    pane_id = env["pane_id"]
-    herdr_bin = env["herdr_bin"]
-
-    if not pane_id or not herdr_bin:
-        return
-
-    try:
-        subprocess.Popen(
-            [herdr_bin, "pane", "release-agent", pane_id,
-             "--source", SOURCE, "--agent", AGENT],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-    except Exception:
-        pass
+    send_to_herdr("pane.release_agent", {})
 
 
 def handle_post_agent(hook_data: dict[str, Any]) -> None:
@@ -151,8 +182,9 @@ def handle_post_tool(hook_data: dict[str, Any]) -> None:
 
 def main() -> None:
     """Main entry point - reads hook invocation from stdin."""
-    # Check if we're in Herdr
-    if os.environ.get("HERDR_ENV") != "1":
+    # Check if we're in Herdr (check pane_id as primary indicator)
+    # HERDR_ENV might not be propagated to hook subprocesses, but HERDR_PANE_ID should be
+    if not os.environ.get("HERDR_PANE_ID"):
         # Not in Herdr, exit gracefully
         sys.exit(0)
 

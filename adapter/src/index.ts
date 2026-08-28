@@ -73,6 +73,31 @@ function reportState(state: string, message: string = ''): void {
 }
 
 /**
+ * Report agent session to Herdr
+ */
+function reportAgentSession(sessionId?: string): void {
+  const { paneId, herdrBin } = getHerdrEnv();
+
+  const args: string[] = [
+    'pane', 'report-agent-session', paneId,
+    '--source', SOURCE,
+    '--agent', AGENT,
+  ];
+
+  if (sessionId) {
+    args.push('--agent-session-id', sessionId);
+  }
+
+  try {
+    const proc = spawn(herdrBin, args, { stdio: 'ignore', detached: true });
+    proc.unref();
+  } catch (err: unknown) {
+    const error = err as Error;
+    console.error(`[herdr-vibe] Agent session report failed: ${error.message}`);
+  }
+}
+
+/**
  * Release agent on exit
  */
 function releaseAgent(): void {
@@ -117,6 +142,10 @@ async function main(): Promise<void> {
   const { paneId } = getHerdrEnv();
   console.error(`[herdr-vibe] Running in Herdr pane: ${paneId}`);
 
+  // Register agent session BEFORE spawning vibe
+  // This prevents Herdr from creating a duplicate auto-detected agent entry
+  reportAgentSession();
+
   // Report initial state
   reportState('idle', 'Vibe ready');
 
@@ -133,6 +162,8 @@ async function main(): Promise<void> {
 
   // Run Vibe with full TTY access so hooks will fire properly
   // State updates will come from hooks (herdr-agent-state.py), not from output parsing
+  // IMPORTANT: Vibe is spawned AFTER agent registration to ensure our custom
+  // source takes precedence over Herdr's auto-detection
   const vibe = spawn('vibe', process.argv.slice(2), {
     stdio: 'inherit',
   });
