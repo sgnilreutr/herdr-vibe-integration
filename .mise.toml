@@ -1,0 +1,45 @@
+# mise configuration for Herdr-Vibe integration
+# https://mise.jdx.dev/
+
+[env]
+# Global environment variables for the project
+NODE_VERSION = "26.7.0"
+PNPM_VERSION = "11.24.0"
+PYTHON_VERSION = "3.11.11"
+
+[tools]
+# Node.js runtime (26.x required for pnpm@11.24.0 which needs node >= 22.13)
+node = "26.7.0"
+
+# Python runtime
+python = "3.11.11"
+
+[tasks]
+# Install all dependencies
+install = "pnpm install -r"
+
+# Type checking
+"typecheck:ts" = "cd adapter && pnpm typecheck"
+"typecheck:py" = "cd adapter && python -m mypy --strict herdr-agent-state.py install.py"
+"typecheck" = "mise run typecheck:ts && mise run typecheck:py"
+
+# Linting
+"lint:ts" = "cd adapter && pnpm lint:ts"
+"lint:py" = "cd adapter && python -m oxlint herdr-agent-state.py install.py"
+"lint" = "mise run lint:ts && mise run lint:py"
+
+# Formatting
+"format:ts" = "cd adapter && pnpm exec oxfmt src/**/*.ts"
+"format:py" = "python -m oxfmt adapter/*.py"
+"format" = "mise run format:ts && mise run format:py"
+
+# Build
+"build:ts" = "cd adapter && pnpm build"
+"build" = "mise run build:ts"
+
+# Full check
+"check" = "mise run typecheck && mise run lint && mise run build"
+
+# Development
+"dev" = "cd adapter && pnpm dev"
+"test" = "cd adapter && pnpm test"

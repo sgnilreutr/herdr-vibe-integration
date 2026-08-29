@@ -145,13 +145,30 @@ def release_agent() -> None:
     send_to_herdr("pane.release_agent", {})
 
 
+def handle_pre_agent(hook_data: dict[str, Any]) -> None:
+    """Handle PRE_AGENT hook invocation."""
+    session_id = hook_data.get("session_id")
+    
+    # Ensure our source is registered
+    if session_id:
+        report_agent_session(session_id)
+    else:
+        report_agent_session()
+
+    # PRE_AGENT fires before the agent generates a response
+    # So we report working (agent is thinking/generating)
+    report_state("working", "Processing request")
+
+
 def handle_post_agent(hook_data: dict[str, Any]) -> None:
     """Handle POST_AGENT hook invocation."""
     session_id = hook_data.get("session_id")
-
-    # Report session if we have one
+    
+    # Ensure our source is registered
     if session_id:
         report_agent_session(session_id)
+    else:
+        report_agent_session()
 
     # POST_AGENT fires after the agent has finished generating a response
     # So we report idle (ready for next input)
@@ -160,16 +177,34 @@ def handle_post_agent(hook_data: dict[str, Any]) -> None:
 
 def handle_pre_tool(hook_data: dict[str, Any]) -> None:
     """Handle PRE_TOOL hook invocation."""
+    session_id = hook_data.get("session_id")
     tool_name = hook_data.get("tool_name")
+    
+    # Ensure our source is registered
+    if session_id:
+        report_agent_session(session_id)
+    else:
+        report_agent_session()
+    
     if tool_name:
         report_state("working", f"Running tool: {tool_name}")
 
 
 def handle_post_tool(hook_data: dict[str, Any]) -> None:
     """Handle POST_TOOL hook invocation."""
+    session_id = hook_data.get("session_id")
     tool_name = hook_data.get("tool_name")
     tool_status = hook_data.get("tool_status")
+    
+    # Ensure our source is registered
+    if session_id:
+        report_agent_session(session_id)
+    else:
+        report_agent_session()
 
+    # After a tool completes, the agent goes back to working (not idle)
+    # because it may continue with more processing
+    # Only report idle for cancelled tools
     if tool_status == "success":
         report_state("working", f"Tool {tool_name} completed")
     elif tool_status == "failure":
@@ -199,7 +234,9 @@ def main() -> None:
     hook_event_name = hook_data.get("hook_event_name")
 
     # Handle different hook types
-    if hook_event_name == "POST_AGENT":
+    if hook_event_name == "PRE_AGENT":
+        handle_pre_agent(hook_data)
+    elif hook_event_name == "POST_AGENT":
         handle_post_agent(hook_data)
     elif hook_event_name == "PRE_TOOL":
         handle_pre_tool(hook_data)

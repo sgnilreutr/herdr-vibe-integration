@@ -11,6 +11,13 @@
 # Herdr will then automatically detect Vibe and show its state in the sidebar.
 
 [[hooks]]
+name = "herdr-pre-agent"
+type = "pre_agent"
+command = "python3 ~/.vibe/herdr-agent-state.py"
+timeout = 5.0
+description = "Report agent state before response generation"
+
+[[hooks]]
 name = "herdr-post-agent"
 type = "post_agent"
 command = "python3 ~/.vibe/herdr-agent-state.py"

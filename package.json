@@ -1,0 +1,22 @@
+{
+  "name": "herdr-vibe-integration",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Herdr integration adapter for Mistral Vibe - Root workspace",
+  "workspaces": [
+    "adapter"
+  ],
+  "scripts": {
+    "install:lefthook": "pnpm add -D lefthook@2.1.12 && npx lefthook install",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "check": "pnpm typecheck && pnpm lint && pnpm build"
+  },
+  "engines": {
+    "node": ">=26.7.0"
+  },
+  "devDependencies": {}
+}

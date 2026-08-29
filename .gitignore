@@ -5,6 +5,10 @@ node_modules/
 .env
 .env.local
 
+# mise version manager
+.mise/
+.mise.toml.local
+
 # Logs
 *.log
 logs/
@@ -25,3 +29,15 @@ Thumbs.db
 
 # Test coverage
 coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Lefthook
+.lefthook/
+
+# pnpm
+pnpm-lock.yaml
+.package.json.swp

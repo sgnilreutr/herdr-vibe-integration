@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "herdr-vibe-integration"
+version = "0.1.0"
+description = "Herdr integration adapter for Mistral Vibe"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = []
+
+[project.optional-dependencies]
+dev = [
+    "mypy==2.3.1",
+    "oxlint==1.80.0",
+    "oxfmt==0.65.0",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_optional = true
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_any_unimported = true
+disallow_any_expr = true
+disallow_any_decorated = true
+disallow_any_explicit = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+strict_concatenate = true
+warn_incomplete_stub = true
+warn_signature_comparison = true
+implicit_reexport = false
+allow_untyped_globals = false
+allow_redefinition = false
+enable_error_code = ["ignore-without-code"]
+
+[tool.oxfmt]
+line_length = 100
+indent_width = 2
+quote_style = "double"
+line_ending = "lf"
+
+[tool.oxlint]
+include = ["**/*.py"]
+exclude = ["node_modules", "dist", ".venv", "__pycache__"]
+
+[tool.oxlint.rules]
+# Strict typing
+no-implicit-any = true
+no-explicit-any = true
+explicit-return-types = true
+explicit-parameter-types = true
+
+# Code quality
+no-unused-vars = true
+no-unused-imports = true
+no-redundant-casts = true
+no-wildcard-imports = true
+prefer-const = true
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

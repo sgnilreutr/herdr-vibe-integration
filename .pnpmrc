@@ -1,0 +1,21 @@
+# pnpm configuration
+# https://pnpm.io/npmrc
+
+# Strict version pinning - no floating versions allowed
+strict-peer-dependencies=true
+auto-install-peers=true
+
+# Safety: Reject packages older than 2 days
+# This is enforced via .pnpmfile.cjs hook
+
+# Use hardlinks for better performance
+node-linker=hard
+
+# Save exact versions
+save-exact=true
+
+# Don't allow any deprecated versions
+allow-deprecated=false
+
+# Use strict resolution
+strict-config=true

@@ -1,0 +1,74 @@
+# Lefthook configuration for Herdr-Vibe integration
+# https://github.com/evilmartians/lefthook
+
+# Install with: pnpm add -D lefthook (in root)
+# Then run: npx lefthook install
+
+export_empty_env: true
+
+pre-push:
+  parallel: true
+  commands:
+    # TypeScript checks
+    typecheck-ts:
+      root: "adapter/"
+      run: pnpm typecheck
+    
+    lint-ts:
+      root: "adapter/"
+      run: pnpm lint:ts
+    
+    # Python checks
+    typecheck-py:
+      files: git diff --name-only --diff-filter=ACM | grep '\.py$'
+      glob: "*.py"
+      run: pnpm exec python -m mypy --strict {files}
+    
+    lint-py:
+      files: git diff --name-only --diff-filter=ACM | grep '\.py$'
+      glob: "*.py"
+      run: pnpm exec python -m oxlint {files}
+    
+    # Formatting checks with oxfmt
+    format-check-ts:
+      root: "adapter/"
+      run: pnpm exec oxfmt --check src/**/*.ts
+    
+    format-check-py:
+      glob: "*.py"
+      run: pnpm exec python -m oxfmt --check {files}
+
+pre-commit:
+  parallel: true
+  commands:
+    # Auto-format TypeScript with oxfmt
+    format-ts:
+      root: "adapter/"
+      run: pnpm exec oxfmt src/**/*.ts
+      stage_fix: true
+    
+    # Auto-format Python with oxfmt
+    format-py:
+      glob: "*.py"
+      run: pnpm exec python -m oxfmt {files}
+      stage_fix: true
+    
+    # Auto-lint TypeScript
+    lint-ts-fix:
+      root: "adapter/"
+      run: pnpm lint:ts:fix
+      stage_fix: true
+
+# Run all checks manually
+check:
+  commands:
+    typecheck:
+      run: pnpm -r typecheck
+    
+    lint:
+      run: pnpm -r lint
+    
+    format-check:
+      run: |
+        pnpm exec prettier --check adapter/src/**/*.ts || echo "TypeScript formatting issues found"
+        pnpm exec python -m ruff check --select I adapter/*.py || echo "Python import sorting issues found"
