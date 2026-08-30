@@ -15,13 +15,13 @@
  *    reach Herdr before the process exits
  */
 
-import { spawn } from 'node:child_process';
-import { createConnection } from 'node:net';
-import { randomBytes } from 'node:crypto';
+import { spawn } from "node:child_process";
+import { createConnection } from "node:net";
+import { randomBytes } from "node:crypto";
 
 // Configuration
-export const SOURCE = 'herdr:vibe';
-export const AGENT = 'vibe';
+export const SOURCE = "herdr:vibe";
+export const AGENT = "vibe";
 
 // Herdr environment variables
 interface HerdrEnv {
@@ -34,9 +34,11 @@ interface HerdrEnv {
  * Check if we're running inside Herdr
  */
 export function isInHerdr(): boolean {
-  return (process.env.HERDR_ENV === '1') &&
-         Boolean(process.env.HERDR_PANE_ID) &&
-         Boolean(process.env.HERDR_BIN_PATH);
+  return (
+    process.env.HERDR_ENV === "1" &&
+    Boolean(process.env.HERDR_PANE_ID) &&
+    Boolean(process.env.HERDR_BIN_PATH)
+  );
 }
 
 /**
@@ -44,8 +46,8 @@ export function isInHerdr(): boolean {
  */
 export function getHerdrEnv(): HerdrEnv {
   return {
-    paneId: process.env.HERDR_PANE_ID || '',
-    herdrBin: process.env.HERDR_BIN_PATH || '',
+    paneId: process.env.HERDR_PANE_ID || "",
+    herdrBin: process.env.HERDR_BIN_PATH || "",
     socketPath: process.env.HERDR_SOCKET_PATH,
   };
 }
@@ -61,22 +63,27 @@ function nextSeq(): number {
 /**
  * Report agent state to Herdr via CLI
  */
-function reportState(state: string, message: string = ''): void {
+function reportState(state: string, message: string = ""): void {
   const { paneId, herdrBin } = getHerdrEnv();
 
   const args: string[] = [
-    'pane', 'report-agent', paneId,
-    '--source', SOURCE,
-    '--agent', AGENT,
-    '--state', state,
+    "pane",
+    "report-agent",
+    paneId,
+    "--source",
+    SOURCE,
+    "--agent",
+    AGENT,
+    "--state",
+    state,
   ];
 
   if (message) {
-    args.push('--message', message);
+    args.push("--message", message);
   }
 
   try {
-    const proc = spawn(herdrBin, args, { stdio: 'ignore', detached: true });
+    const proc = spawn(herdrBin, args, { stdio: "ignore", detached: true });
     proc.unref();
   } catch (err: unknown) {
     const error = err as Error;
@@ -91,17 +98,21 @@ function reportAgentSession(sessionId?: string): void {
   const { paneId, herdrBin } = getHerdrEnv();
 
   const args: string[] = [
-    'pane', 'report-agent-session', paneId,
-    '--source', SOURCE,
-    '--agent', AGENT,
+    "pane",
+    "report-agent-session",
+    paneId,
+    "--source",
+    SOURCE,
+    "--agent",
+    AGENT,
   ];
 
   if (sessionId) {
-    args.push('--agent-session-id', sessionId);
+    args.push("--agent-session-id", sessionId);
   }
 
   try {
-    const proc = spawn(herdrBin, args, { stdio: 'ignore', detached: true });
+    const proc = spawn(herdrBin, args, { stdio: "ignore", detached: true });
     proc.unref();
   } catch (err: unknown) {
     const error = err as Error;
@@ -117,11 +128,11 @@ function releaseAgent(): void {
   const { paneId, herdrBin } = getHerdrEnv();
 
   try {
-    const proc = spawn(herdrBin, [
-      'pane', 'release-agent', paneId,
-      '--source', SOURCE,
-      '--agent', AGENT,
-    ], { stdio: 'ignore', detached: true });
+    const proc = spawn(
+      herdrBin,
+      ["pane", "release-agent", paneId, "--source", SOURCE, "--agent", AGENT],
+      { stdio: "ignore", detached: true },
+    );
     proc.unref();
   } catch (err: unknown) {
     const error = err as Error;
@@ -138,11 +149,11 @@ function sendToSocket(method: string, params: Record<string, unknown>): Promise<
   const { paneId, socketPath } = getHerdrEnv();
 
   if (!socketPath) {
-    console.error('[herdr-vibe] No socket path for socket API');
+    console.error("[herdr-vibe] No socket path for socket API");
     return Promise.resolve();
   }
 
-  const requestId = `${SOURCE}:${Date.now()}:${randomBytes(3).toString('hex')}`;
+  const requestId = `${SOURCE}:${Date.now()}:${randomBytes(3).toString("hex")}`;
   const request = {
     id: requestId,
     method,
@@ -166,16 +177,16 @@ function sendToSocket(method: string, params: Record<string, unknown>): Promise<
 
     try {
       const client = createConnection(socketPath);
-      client.on('error', (err: Error) => {
+      client.on("error", (err: Error) => {
         console.error(`[herdr-vibe] Socket error: ${err.message}`);
         done();
       });
-      client.on('connect', () => {
-        client.write(JSON.stringify(request) + '\n', () => {
+      client.on("connect", () => {
+        client.write(JSON.stringify(request) + "\n", () => {
           client.end();
         });
       });
-      client.on('close', done);
+      client.on("close", done);
       // Don't let a hung socket block process exit indefinitely
       setTimeout(done, 500);
     } catch (err: unknown) {
@@ -194,25 +205,25 @@ function reportAgentSessionSocket(sessionId?: string): Promise<void> {
   if (sessionId) {
     params.agent_session_id = sessionId;
   }
-  return sendToSocket('pane.report_agent_session', params);
+  return sendToSocket("pane.report_agent_session", params);
 }
 
 /**
  * Report agent state to Herdr via socket
  */
-function reportStateSocket(state: string, message: string = ''): Promise<void> {
+function reportStateSocket(state: string, message: string = ""): Promise<void> {
   const params: Record<string, unknown> = { state };
   if (message) {
     params.message = message;
   }
-  return sendToSocket('pane.report_agent', params);
+  return sendToSocket("pane.report_agent", params);
 }
 
 /**
  * Release agent via socket
  */
 function releaseAgentSocket(): Promise<void> {
-  return sendToSocket('pane.release_agent', {});
+  return sendToSocket("pane.release_agent", {});
 }
 
 /**
@@ -222,16 +233,16 @@ async function main(): Promise<void> {
   // Check if we're in Herdr
   if (!isInHerdr()) {
     // Not in Herdr - just exec vibe with inherit to preserve TUI
-    const vibe = spawn('vibe', process.argv.slice(2), {
-      stdio: 'inherit',
+    const vibe = spawn("vibe", process.argv.slice(2), {
+      stdio: "inherit",
     });
 
-    vibe.on('error', (err: Error) => {
-      console.error('[herdr-vibe] Failed to start vibe:', err.message);
+    vibe.on("error", (err: Error) => {
+      console.error("[herdr-vibe] Failed to start vibe:", err.message);
       process.exit(1);
     });
 
-    vibe.on('exit', (code: number | null) => {
+    vibe.on("exit", (code: number | null) => {
       process.exit(code || 0);
     });
 
@@ -246,11 +257,11 @@ async function main(): Promise<void> {
   // Hooks will take over for session_id and state updates
   if (socketPath) {
     await reportAgentSessionSocket();
-    await reportStateSocket('idle', 'Vibe ready');
+    await reportStateSocket("idle", "Vibe ready");
   } else {
     // Fallback to CLI if socket not available
     reportAgentSession();
-    reportState('idle', 'Vibe ready');
+    reportState("idle", "Vibe ready");
   }
 
   // Set up cleanup - use socket API if available, and actually wait for it
@@ -267,10 +278,10 @@ async function main(): Promise<void> {
     }
   };
 
-  process.on('SIGINT', () => {
+  process.on("SIGINT", () => {
     cleanup().finally(() => process.exit(130));
   });
-  process.on('SIGTERM', () => {
+  process.on("SIGTERM", () => {
     cleanup().finally(() => process.exit(143));
   });
 
@@ -280,27 +291,27 @@ async function main(): Promise<void> {
   // All state reporting comes from hooks.toml + herdr-agent-state.py.
   // IMPORTANT: Vibe is spawned AFTER agent registration to ensure our
   // custom source takes precedence over Herdr's auto-detection.
-  const vibe = spawn('vibe', process.argv.slice(2), {
-    stdio: 'inherit',
+  const vibe = spawn("vibe", process.argv.slice(2), {
+    stdio: "inherit",
   });
 
-  vibe.on('error', async (err: Error) => {
-    console.error('[herdr-vibe] Failed to start vibe:', err.message);
+  vibe.on("error", async (err: Error) => {
+    console.error("[herdr-vibe] Failed to start vibe:", err.message);
     if (socketPath) {
-      await reportStateSocket('idle', 'Error: ' + err.message);
+      await reportStateSocket("idle", "Error: " + err.message);
     } else {
-      reportState('idle', 'Error: ' + err.message);
+      reportState("idle", "Error: " + err.message);
     }
     await cleanup();
     process.exit(1);
   });
 
-  vibe.on('exit', async (code: number | null) => {
-    const message = code === 0 ? 'Vibe exited' : `Vibe exited with code ${code}`;
+  vibe.on("exit", async (code: number | null) => {
+    const message = code === 0 ? "Vibe exited" : `Vibe exited with code ${code}`;
     if (socketPath) {
-      await reportStateSocket('idle', message);
+      await reportStateSocket("idle", message);
     } else {
-      reportState('idle', message);
+      reportState("idle", message);
     }
     await cleanup();
     process.exit(code || 0);
@@ -309,7 +320,7 @@ async function main(): Promise<void> {
 
 // Run main
 main().catch(async (err: Error) => {
-  console.error('[herdr-vibe] Fatal error:', err.message);
+  console.error("[herdr-vibe] Fatal error:", err.message);
   releaseAgent();
   process.exit(1);
 });
