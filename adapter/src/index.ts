@@ -3,15 +3,16 @@
 /**
  * Herdr Integration Adapter for Mistral Vibe
  *
- * Uses Vibe's native hook system AND output parsing to report state changes to Herdr.
- * 
+ * Hooks-only architecture (see docs/adr/ADR-001-hooks-only-architecture.md).
+ *
  * Architecture:
  * 1. Wrapper detects Herdr environment
  * 2. Reports initial idle state
- * 3. Runs Vibe with piped stdout/stderr to parse output for state detection
- * 4. Hooks (via hooks.toml + herdr-agent-state.py) report state changes for tool usage
- * 5. Output parsing detects when Vibe is generating text responses (for plain text prompts)
- * 6. Handles cleanup on exit
+ * 3. Runs Vibe with stdio: 'inherit' so its TTY-dependent TUI and hook
+ *    system both work (piping stdout/stderr breaks both - see ADR-001)
+ * 4. Hooks (via hooks.toml + herdr-agent-state.py) report all state changes
+ * 5. Handles cleanup on exit, waiting for the release report to actually
+ *    reach Herdr before the process exits
  */
 
 import { spawn } from 'node:child_process';
@@ -47,6 +48,14 @@ export function getHerdrEnv(): HerdrEnv {
     herdrBin: process.env.HERDR_BIN_PATH || '',
     socketPath: process.env.HERDR_SOCKET_PATH,
   };
+}
+
+// Monotonic sequence counter so Herdr can order our reports and doesn't
+// silently drop out-of-order ones (see herdrdev/herdr#667).
+let seqCounter = 0;
+function nextSeq(): number {
+  seqCounter += 1;
+  return seqCounter;
 }
 
 /**
@@ -101,7 +110,8 @@ function reportAgentSession(sessionId?: string): void {
 }
 
 /**
- * Release agent on exit
+ * Release agent on exit (synchronous CLI call - safe to use in exit paths
+ * since spawnSync blocks until the process completes)
  */
 function releaseAgent(): void {
   const { paneId, herdrBin } = getHerdrEnv();
@@ -120,16 +130,18 @@ function releaseAgent(): void {
 }
 
 /**
- * Send a JSON-RPC request to Herdr via Unix socket
+ * Send a JSON-RPC request to Herdr via Unix socket. Returns a promise that
+ * resolves once the write has been flushed (or the connection failed), so
+ * callers that need the report to land before the process exits can await it.
  */
-function sendToSocket(method: string, params: Record<string, unknown>): void {
+function sendToSocket(method: string, params: Record<string, unknown>): Promise<void> {
   const { paneId, socketPath } = getHerdrEnv();
-  
+
   if (!socketPath) {
     console.error('[herdr-vibe] No socket path for socket API');
-    return;
+    return Promise.resolve();
   }
-  
+
   const requestId = `${SOURCE}:${Date.now()}:${randomBytes(3).toString('hex')}`;
   const request = {
     id: requestId,
@@ -139,46 +151,68 @@ function sendToSocket(method: string, params: Record<string, unknown>): void {
       pane_id: paneId,
       source: SOURCE,
       agent: AGENT,
+      seq: nextSeq(),
     },
   };
-  
-  try {
-    const client = createConnection(socketPath);
-    client.write(JSON.stringify(request) + '\n');
-    client.end();
-  } catch (err: unknown) {
-    const error = err as Error;
-    console.error(`[herdr-vibe] Socket error: ${error.message}`);
-  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+
+    try {
+      const client = createConnection(socketPath);
+      client.on('error', (err: Error) => {
+        console.error(`[herdr-vibe] Socket error: ${err.message}`);
+        done();
+      });
+      client.on('connect', () => {
+        client.write(JSON.stringify(request) + '\n', () => {
+          client.end();
+        });
+      });
+      client.on('close', done);
+      // Don't let a hung socket block process exit indefinitely
+      setTimeout(done, 500);
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error(`[herdr-vibe] Socket error: ${error.message}`);
+      done();
+    }
+  });
 }
 
 /**
  * Report agent session to Herdr via socket
  */
-function reportAgentSessionSocket(sessionId?: string): void {
+function reportAgentSessionSocket(sessionId?: string): Promise<void> {
   const params: Record<string, unknown> = {};
   if (sessionId) {
     params.agent_session_id = sessionId;
   }
-  sendToSocket('pane.report_agent_session', params);
+  return sendToSocket('pane.report_agent_session', params);
 }
 
 /**
  * Report agent state to Herdr via socket
  */
-function reportStateSocket(state: string, message: string = ''): void {
+function reportStateSocket(state: string, message: string = ''): Promise<void> {
   const params: Record<string, unknown> = { state };
   if (message) {
     params.message = message;
   }
-  sendToSocket('pane.report_agent', params);
+  return sendToSocket('pane.report_agent', params);
 }
 
 /**
  * Release agent via socket
  */
-function releaseAgentSocket(): void {
-  sendToSocket('pane.release_agent', {});
+function releaseAgentSocket(): Promise<void> {
+  return sendToSocket('pane.release_agent', {});
 }
 
 /**
@@ -211,202 +245,70 @@ async function main(): Promise<void> {
   // This ensures agent appears immediately in Herdr tab
   // Hooks will take over for session_id and state updates
   if (socketPath) {
-    reportAgentSessionSocket();
-    reportStateSocket('idle', 'Vibe ready');
+    await reportAgentSessionSocket();
+    await reportStateSocket('idle', 'Vibe ready');
   } else {
     // Fallback to CLI if socket not available
     reportAgentSession();
     reportState('idle', 'Vibe ready');
   }
 
-  // Set up cleanup - use socket API if available
-  const cleanup = () => {
+  // Set up cleanup - use socket API if available, and actually wait for it
+  // to land before the process exits (process.on('exit', ...) can't do
+  // async work, so this must run before process.exit() is called).
+  let cleanedUp = false;
+  const cleanup = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     if (socketPath) {
-      releaseAgentSocket();
+      await releaseAgentSocket();
     } else {
       releaseAgent();
     }
   };
-  
-  process.on('exit', cleanup);
+
   process.on('SIGINT', () => {
-    cleanup();
-    process.exit(130);
+    cleanup().finally(() => process.exit(130));
   });
   process.on('SIGTERM', () => {
-    cleanup();
-    process.exit(143);
+    cleanup().finally(() => process.exit(143));
   });
 
-  // Run Vibe with piped stdout/stderr so we can parse output for state detection
-  // State updates will come from:
-  // 1. Hooks (herdr-agent-state.py) for tool usage
-  // 2. Output parsing for plain text responses
-  // IMPORTANT: Vibe is spawned AFTER agent registration to ensure our custom
-  // source takes precedence over Herdr's auto-detection
-  // Note: We use stdio: 'pipe' so we can parse Vibe's output and detect state changes
-  // We forward output to the terminal while parsing it
+  // Run Vibe with full TTY access. Vibe requires a real TTY for its
+  // interactive TUI and hook system to work at all - piping stdout/stderr
+  // here breaks both (see docs/adr/ADR-001-hooks-only-architecture.md).
+  // All state reporting comes from hooks.toml + herdr-agent-state.py.
+  // IMPORTANT: Vibe is spawned AFTER agent registration to ensure our
+  // custom source takes precedence over Herdr's auto-detection.
   const vibe = spawn('vibe', process.argv.slice(2), {
-    stdio: 'pipe',
+    stdio: 'inherit',
   });
 
-  // Track if we're currently in a response (to detect when we go back to idle)
-  let inResponse = false;
-  let idleTimeout: NodeJS.Timeout | null = null;
-
-  // Function to detect if a line indicates Vibe is waiting for input (showing a prompt)
-  function isIdleIndicator(line: string): boolean {
-    // These patterns indicate Vibe is waiting for user input
-    const idlePatterns = [
-      /^\s*>\s*$/,
-      /^\s*>>\s*$/,
-      /^\s*vibe>\s*$/i,
-      /^\s*\$\s*$/,
-      /Enter your prompt/,
-      /Waiting for input/,
-    ];
-    return idlePatterns.some(p => p.test(line));
-  }
-
-  // Function to detect if a line indicates Vibe is generating output
-  function isResponseIndicator(line: string): boolean {
-    // A non-empty line that is not a prompt indicates a response
-    const trimmed = line.trim();
-    return trimmed.length > 0 && !isIdleIndicator(line);
-  }
-
-  // Forward output from Vibe to the terminal while parsing
-  // We need to buffer lines to handle partial writes
-  let stdoutBuffer = '';
-  
-  if (vibe.stdout) {
-    vibe.stdout.on('data', (data: Buffer) => {
-      const chunk = data.toString();
-      stdoutBuffer += chunk;
-      
-      // Forward to stdout immediately
-      process.stdout.write(chunk);
-
-      // Split into lines and analyze
-      const lines = stdoutBuffer.split('\n');
-      // Keep the last partial line in buffer
-      stdoutBuffer = lines.pop() || '';
-      
-      for (const line of lines) {
-        if (line.trim()) {
-          // If we see non-prompt output, we're in a response
-          if (isResponseIndicator(line)) {
-            if (!inResponse) {
-              inResponse = true;
-              // Clear any pending idle timeout
-              if (idleTimeout) {
-                clearTimeout(idleTimeout);
-                idleTimeout = null;
-              }
-              // Report working state
-              if (socketPath) {
-                reportStateSocket('working', 'Generating response');
-              } else {
-                reportState('working', 'Generating response');
-              }
-            }
-          } else if (isIdleIndicator(line)) {
-            // We see a prompt - we're idle
-            if (inResponse) {
-              inResponse = false;
-              if (socketPath) {
-                reportStateSocket('idle', 'Ready for input');
-              } else {
-                reportState('idle', 'Ready for input');
-              }
-            }
-          }
-        }
-      }
-    });
-  }
-
-  if (vibe.stderr) {
-    vibe.stderr.on('data', (data: Buffer) => {
-      const chunk = data.toString();
-      // Forward to stderr
-      process.stderr.write(chunk);
-    });
-  }
-
-  // Set up timeout to detect when Vibe goes idle
-  // If we don't see any output for a while, assume we're idle
-  function scheduleIdleCheck() {
-    if (idleTimeout) clearTimeout(idleTimeout);
-    idleTimeout = setTimeout(() => {
-      if (inResponse) {
-        inResponse = false;
-        if (socketPath) {
-          reportStateSocket('idle', 'Ready for input');
-        } else {
-          reportState('idle', 'Ready for input');
-        }
-      }
-    }, 2000); // 2 seconds of no output = idle
-  }
-
-  // Schedule idle check on each data chunk
-  if (vibe.stdout) {
-    vibe.stdout.on('data', () => {
-      scheduleIdleCheck();
-    });
-  }
-  if (vibe.stderr) {
-    vibe.stderr.on('data', () => {
-      scheduleIdleCheck();
-    });
-  }
-  
-  // Check for idle state on exit
-  if (vibe.stdout) {
-    vibe.stdout.on('end', () => {
-      scheduleIdleCheck();
-    });
-  }
-  
-  if (vibe.stderr) {
-    vibe.stderr.on('end', () => {
-      scheduleIdleCheck();
-    });
-  }
-
-  vibe.on('error', (err: Error) => {
+  vibe.on('error', async (err: Error) => {
     console.error('[herdr-vibe] Failed to start vibe:', err.message);
     if (socketPath) {
-      reportStateSocket('idle', 'Error: ' + err.message);
+      await reportStateSocket('idle', 'Error: ' + err.message);
     } else {
       reportState('idle', 'Error: ' + err.message);
     }
-    releaseAgent();
+    await cleanup();
     process.exit(1);
   });
 
-  vibe.on('exit', (code: number | null) => {
-    if (code === 0) {
-      if (socketPath) {
-        reportStateSocket('idle', 'Vibe exited');
-      } else {
-        reportState('idle', 'Vibe exited');
-      }
+  vibe.on('exit', async (code: number | null) => {
+    const message = code === 0 ? 'Vibe exited' : `Vibe exited with code ${code}`;
+    if (socketPath) {
+      await reportStateSocket('idle', message);
     } else {
-      if (socketPath) {
-        reportStateSocket('idle', `Vibe exited with code ${code}`);
-      } else {
-        reportState('idle', `Vibe exited with code ${code}`);
-      }
+      reportState('idle', message);
     }
-    releaseAgent();
+    await cleanup();
     process.exit(code || 0);
   });
 }
 
 // Run main
-main().catch((err: Error) => {
+main().catch(async (err: Error) => {
   console.error('[herdr-vibe] Fatal error:', err.message);
   releaseAgent();
   process.exit(1);

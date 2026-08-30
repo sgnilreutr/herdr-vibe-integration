@@ -55,6 +55,8 @@ module.exports = {
       } else {
         console.log(`[pnpm-safety] All package.json versions are pinned`);
       }
+
+      return lockfile;
     }
   }
 };

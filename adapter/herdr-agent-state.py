@@ -18,10 +18,10 @@ Herdr Environment:
   HERDR_PANE_ID - The pane ID (e.g., "w1:p1")
   HERDR_BIN_PATH - Path to the herdr CLI binary
 
-Hook Types:
-  POST_AGENT - Called after agent generates a response
-  PRE_TOOL - Called before a tool is executed
-  POST_TOOL - Called after a tool completes
+Hook Types (Vibe sends these lowercase as hook_event_name):
+  post_agent - Called after agent generates a response
+  pre_tool - Called before a tool is executed
+  post_tool - Called after a tool completes
 """
 
 from __future__ import annotations
@@ -38,6 +38,13 @@ from typing import Any
 # --- Configuration ---
 SOURCE = "herdr:vibe"
 AGENT = "vibe"
+
+# Monotonic-ish sequence number so Herdr can order our reports and doesn't
+# silently drop out-of-order ones (see herdrdev/herdr#667). Hook invocations
+# are separate processes, so wall-clock microseconds is the simplest thing
+# that stays monotonic across them without shared state.
+def _next_seq() -> int:
+    return int(time.time() * 1_000_000)
 
 
 def get_herdr_env() -> dict[str, str | None]:
@@ -64,7 +71,7 @@ def send_to_herdr(method: str, params: dict[str, Any]) -> bool:
     request = {
         "id": request_id,
         "method": method,
-        "params": {**params, "pane_id": pane_id, "source": SOURCE, "agent": AGENT},
+        "params": {**params, "pane_id": pane_id, "source": SOURCE, "agent": AGENT, "seq": _next_seq()},
     }
 
     # Try Unix socket first (more reliable, doesn't require HERDR_BIN_PATH)
@@ -145,21 +152,6 @@ def release_agent() -> None:
     send_to_herdr("pane.release_agent", {})
 
 
-def handle_pre_agent(hook_data: dict[str, Any]) -> None:
-    """Handle PRE_AGENT hook invocation."""
-    session_id = hook_data.get("session_id")
-    
-    # Ensure our source is registered
-    if session_id:
-        report_agent_session(session_id)
-    else:
-        report_agent_session()
-
-    # PRE_AGENT fires before the agent generates a response
-    # So we report working (agent is thinking/generating)
-    report_state("working", "Processing request")
-
-
 def handle_post_agent(hook_data: dict[str, Any]) -> None:
     """Handle POST_AGENT hook invocation."""
     session_id = hook_data.get("session_id")
@@ -233,14 +225,12 @@ def main() -> None:
     # Get hook type from the data
     hook_event_name = hook_data.get("hook_event_name")
 
-    # Handle different hook types
-    if hook_event_name == "PRE_AGENT":
-        handle_pre_agent(hook_data)
-    elif hook_event_name == "POST_AGENT":
+    # Handle different hook types (Vibe sends lowercase, e.g. "pre_tool")
+    if hook_event_name == "post_agent":
         handle_post_agent(hook_data)
-    elif hook_event_name == "PRE_TOOL":
+    elif hook_event_name == "pre_tool":
         handle_pre_tool(hook_data)
-    elif hook_event_name == "POST_TOOL":
+    elif hook_event_name == "post_tool":
         handle_post_tool(hook_data)
     else:
         # Unknown hook type, report idle
