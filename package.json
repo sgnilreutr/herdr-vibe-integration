@@ -17,6 +17,5 @@
   },
   "engines": {
     "node": ">=26.7.0"
-  },
-  "devDependencies": {}
+  }
 }
