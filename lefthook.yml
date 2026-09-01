@@ -20,12 +20,12 @@ pre-push:
     
     # Python checks
     typecheck-py:
-      files: git diff --name-only --diff-filter=ACM | grep '\.py$'
+      files: git diff --name-only --diff-filter=ACM | grep '\.py$' || true
       glob: "*.py"
       run: mise exec -- python -m mypy --strict {files}
 
     lint-py:
-      files: git diff --name-only --diff-filter=ACM | grep '\.py$'
+      files: git diff --name-only --diff-filter=ACM | grep '\.py$' || true
       glob: "*.py"
       run: mise exec -- python -m ruff check {files}
 
