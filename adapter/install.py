@@ -49,24 +49,24 @@ def expand_path(path: str) -> Path:
     return Path(path)
 
 
-def install_file(source: Path, dest: Path) -> bool:
+def install_file(source: Path, dest: str) -> bool:
     """Copy a file from source to dest, with proper permissions."""
-    dest = expand_path(str(dest))
+    dest_path = expand_path(dest)
 
     # Ensure parent directory exists
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        shutil.copy2(source, dest)
+        shutil.copy2(source, dest_path)
 
         # Make executable if it's a script
-        if dest.suffix in (".py", ".sh", ""):
-            dest.chmod(dest.stat().st_mode | stat.S_IEXEC)
+        if dest_path.suffix in (".py", ".sh", ""):
+            dest_path.chmod(dest_path.stat().st_mode | stat.S_IEXEC)
 
-        print(f"  Installed: {dest}")
+        print(f"  Installed: {dest_path}")
         return True
     except Exception as e:
-        print(f"  Failed to install {dest}: {e}", file=sys.stderr)
+        print(f"  Failed to install {dest_path}: {e}", file=sys.stderr)
         return False
 
 
@@ -78,12 +78,7 @@ def install_symlink() -> bool:
     if not dist_path.exists():
         print("  Building TypeScript first...", file=sys.stderr)
         try:
-            subprocess.run(
-                ["npm", "run", "build"],
-                cwd=script_dir,
-                check=True,
-                capture_output=True
-            )
+            subprocess.run(["npm", "run", "build"], cwd=script_dir, check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
             print(f"  Failed to build TypeScript: {e}", file=sys.stderr)
             return False

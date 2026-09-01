@@ -22,21 +22,21 @@ pre-push:
     typecheck-py:
       files: git diff --name-only --diff-filter=ACM | grep '\.py$'
       glob: "*.py"
-      run: pnpm exec python -m mypy --strict {files}
-    
+      run: mise exec -- python -m mypy --strict {files}
+
     lint-py:
       files: git diff --name-only --diff-filter=ACM | grep '\.py$'
       glob: "*.py"
-      run: pnpm exec python -m oxlint {files}
-    
-    # Formatting checks with oxfmt
+      run: mise exec -- python -m ruff check {files}
+
+    # Formatting checks
     format-check-ts:
       root: "adapter/"
       run: pnpm exec oxfmt --check src/**/*.ts
-    
+
     format-check-py:
       glob: "*.py"
-      run: pnpm exec python -m oxfmt --check {files}
+      run: mise exec -- python -m ruff format --check {files}
 
 pre-commit:
   parallel: true
@@ -47,10 +47,10 @@ pre-commit:
       run: pnpm exec oxfmt src/**/*.ts
       stage_fix: true
     
-    # Auto-format Python with oxfmt
+    # Auto-format Python with ruff
     format-py:
       glob: "*.py"
-      run: pnpm exec python -m oxfmt {files}
+      run: mise exec -- python -m ruff format {files}
       stage_fix: true
     
     # Auto-lint TypeScript
@@ -71,4 +71,4 @@ check:
     format-check:
       run: |
         pnpm exec prettier --check adapter/src/**/*.ts || echo "TypeScript formatting issues found"
-        pnpm exec python -m ruff check --select I adapter/*.py || echo "Python import sorting issues found"
+        mise exec -- python -m ruff check --select I adapter/*.py || echo "Python import sorting issues found"

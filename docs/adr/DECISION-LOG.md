@@ -185,6 +185,31 @@ Could revert to CLI-only, but would be less robust.
 
 ---
 
+## 2026-09-01 - Iteration 6: Reduce Socket Chatter and Startup Latency
+**Status:** Accepted
+**Related ADR:** [ADR-002](ADR-002-socket-api-over-cli.md)
+
+**Context:**
+Every hook invocation (POST_AGENT, PRE_TOOL, POST_TOOL) called both `report_agent_session()` and `report_state()`, opening two socket connections per hook even though the session ID doesn't change during a conversation. A single turn with 2 tool calls produced ~10 socket round-trips. Separately, the adapter's startup path awaited `reportAgentSessionSocket()` and `reportStateSocket()` sequentially, each with a 500ms fallback timeout, adding up to 1s of dead time before Vibe was spawned.
+
+**Decision:**
+- `herdr-agent-state.py`: only call `report_agent_session()` from `handle_post_agent`; `handle_pre_tool` and `handle_post_tool` report state only.
+- `adapter/src/index.ts`: run the initial `reportAgentSessionSocket()` and `reportStateSocket()` calls concurrently via `Promise.all` instead of sequentially.
+
+**Rationale:**
+- Session ID is stable for the life of a Vibe session; re-registering it on every tool call is redundant.
+- The two startup socket calls are independent, so serializing them only adds latency without benefit.
+
+**Impact:**
+- Fewer socket connections per turn (roughly half, scaling with tool-call count)
+- Up to ~1s faster adapter startup before Vibe launches
+- No change to observable state semantics (idle/working/blocked reporting unchanged)
+
+**Reversibility:**
+Fully reversible - re-add the session calls or serialize the startup awaits if a regression surfaces.
+
+---
+
 ## Current State (2026-08-28)
 
 ### Architecture

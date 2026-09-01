@@ -33,11 +33,19 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Any
+from typing import cast
+
+
+def _get_str(data: dict[str, object], key: str) -> str | None:
+    """Narrow a JSON field to str, discarding any other JSON type."""
+    value = data.get(key)
+    return value if isinstance(value, str) else None
+
 
 # --- Configuration ---
 SOURCE = "herdr:vibe"
 AGENT = "vibe"
+
 
 # Monotonic-ish sequence number so Herdr can order our reports and doesn't
 # silently drop out-of-order ones (see herdrdev/herdr#667). Hook invocations
@@ -56,7 +64,7 @@ def get_herdr_env() -> dict[str, str | None]:
     }
 
 
-def send_to_herdr(method: str, params: dict[str, Any]) -> bool:
+def send_to_herdr(method: str, params: dict[str, object]) -> bool:
     """Send a JSON-RPC request to Herdr via Unix socket or CLI fallback."""
     env = get_herdr_env()
     socket_path = env["socket_path"]
@@ -71,7 +79,13 @@ def send_to_herdr(method: str, params: dict[str, Any]) -> bool:
     request = {
         "id": request_id,
         "method": method,
-        "params": {**params, "pane_id": pane_id, "source": SOURCE, "agent": AGENT, "seq": _next_seq()},
+        "params": {
+            **params,
+            "pane_id": pane_id,
+            "source": SOURCE,
+            "agent": AGENT,
+            "seq": _next_seq(),
+        },
     }
 
     # Try Unix socket first (more reliable, doesn't require HERDR_BIN_PATH)
@@ -96,33 +110,54 @@ def send_to_herdr(method: str, params: dict[str, Any]) -> bool:
         try:
             # Map method names to CLI commands
             if method == "pane.report_agent":
+                state = _get_str(params, "state") or "idle"
                 args = [
                     herdr_bin,
-                    "pane", "report-agent", pane_id,
-                    "--source", SOURCE,
-                    "--agent", AGENT,
-                    "--state", params.get("state", "idle"),
+                    "pane",
+                    "report-agent",
+                    pane_id,
+                    "--source",
+                    SOURCE,
+                    "--agent",
+                    AGENT,
+                    "--state",
+                    state,
                 ]
-                if "message" in params:
-                    args.extend(["--message", params["message"]])
+                message = _get_str(params, "message")
+                if message is not None:
+                    args.extend(["--message", message])
                 subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return True
             elif method == "pane.report_agent_session":
                 args = [
                     herdr_bin,
-                    "pane", "report-agent-session", pane_id,
-                    "--source", SOURCE,
-                    "--agent", AGENT,
+                    "pane",
+                    "report-agent-session",
+                    pane_id,
+                    "--source",
+                    SOURCE,
+                    "--agent",
+                    AGENT,
                 ]
-                if "agent_session_id" in params:
-                    args.extend(["--agent-session-id", params["agent_session_id"]])
+                agent_session_id = _get_str(params, "agent_session_id")
+                if agent_session_id is not None:
+                    args.extend(["--agent-session-id", agent_session_id])
                 subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return True
             elif method == "pane.release_agent":
                 subprocess.Popen(
-                    [herdr_bin, "pane", "release-agent", pane_id,
-                     "--source", SOURCE, "--agent", AGENT],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    [
+                        herdr_bin,
+                        "pane",
+                        "release-agent",
+                        pane_id,
+                        "--source",
+                        SOURCE,
+                        "--agent",
+                        AGENT,
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 return True
         except Exception:
@@ -133,7 +168,7 @@ def send_to_herdr(method: str, params: dict[str, Any]) -> bool:
 
 def report_state(state: str, message: str = "") -> None:
     """Report agent state to Herdr."""
-    params: dict[str, Any] = {"state": state}
+    params: dict[str, object] = {"state": state}
     if message:
         params["message"] = message
     send_to_herdr("pane.report_agent", params)
@@ -141,7 +176,7 @@ def report_state(state: str, message: str = "") -> None:
 
 def report_agent_session(session_id: str | None = None) -> None:
     """Report agent session to Herdr."""
-    params: dict[str, Any] = {}
+    params: dict[str, object] = {}
     if session_id:
         params["agent_session_id"] = session_id
     send_to_herdr("pane.report_agent_session", params)
@@ -152,10 +187,10 @@ def release_agent() -> None:
     send_to_herdr("pane.release_agent", {})
 
 
-def handle_post_agent(hook_data: dict[str, Any]) -> None:
+def handle_post_agent(hook_data: dict[str, object]) -> None:
     """Handle POST_AGENT hook invocation."""
-    session_id = hook_data.get("session_id")
-    
+    session_id = _get_str(hook_data, "session_id")
+
     # Ensure our source is registered
     if session_id:
         report_agent_session(session_id)
@@ -167,32 +202,20 @@ def handle_post_agent(hook_data: dict[str, Any]) -> None:
     report_state("idle", "Ready for input")
 
 
-def handle_pre_tool(hook_data: dict[str, Any]) -> None:
+def handle_pre_tool(hook_data: dict[str, object]) -> None:
     """Handle PRE_TOOL hook invocation."""
-    session_id = hook_data.get("session_id")
-    tool_name = hook_data.get("tool_name")
-    
-    # Ensure our source is registered
-    if session_id:
-        report_agent_session(session_id)
-    else:
-        report_agent_session()
-    
+    tool_name = _get_str(hook_data, "tool_name")
+
+    # Session is registered on POST_AGENT; no need to re-send it on every
+    # tool call since it doesn't change within a session.
     if tool_name:
         report_state("working", f"Running tool: {tool_name}")
 
 
-def handle_post_tool(hook_data: dict[str, Any]) -> None:
+def handle_post_tool(hook_data: dict[str, object]) -> None:
     """Handle POST_TOOL hook invocation."""
-    session_id = hook_data.get("session_id")
-    tool_name = hook_data.get("tool_name")
-    tool_status = hook_data.get("tool_status")
-    
-    # Ensure our source is registered
-    if session_id:
-        report_agent_session(session_id)
-    else:
-        report_agent_session()
+    tool_name = _get_str(hook_data, "tool_name") or "unknown"
+    tool_status = _get_str(hook_data, "tool_status")
 
     # After a tool completes, the agent goes back to working (not idle)
     # because it may continue with more processing
@@ -216,14 +239,18 @@ def main() -> None:
         sys.exit(0)
 
     # Read all stdin (Vibe sends the full hook invocation as JSON)
+    hook_data: dict[str, object] = {}
     try:
-        stdin_data = sys.stdin.read()
-        hook_data = json.loads(stdin_data) if stdin_data.strip() else {}
-    except (json.JSONDecodeError, Exception):
-        hook_data = {}
+        stdin_data = cast(str, sys.stdin.read())
+        if stdin_data.strip():
+            parsed: object = json.loads(stdin_data)
+            if isinstance(parsed, dict):
+                hook_data = parsed
+    except json.JSONDecodeError:
+        pass
 
     # Get hook type from the data
-    hook_event_name = hook_data.get("hook_event_name")
+    hook_event_name = _get_str(hook_data, "hook_event_name")
 
     # Handle different hook types (Vibe sends lowercase, e.g. "pre_tool")
     if hook_event_name == "post_agent":

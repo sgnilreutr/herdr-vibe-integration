@@ -25,12 +25,12 @@ install = "pnpm install -r"
 
 # Linting
 "lint:ts" = "cd adapter && pnpm lint:ts"
-"lint:py" = "cd adapter && python -m oxlint herdr-agent-state.py install.py"
+"lint:py" = "cd adapter && python -m ruff check herdr-agent-state.py install.py"
 "lint" = "mise run lint:ts && mise run lint:py"
 
 # Formatting
 "format:ts" = "cd adapter && pnpm exec oxfmt src/**/*.ts"
-"format:py" = "python -m oxfmt adapter/*.py"
+"format:py" = "python -m ruff format adapter/*.py"
 "format" = "mise run format:ts && mise run format:py"
 
 # Build

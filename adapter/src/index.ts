@@ -256,8 +256,7 @@ async function main(): Promise<void> {
   // This ensures agent appears immediately in Herdr tab
   // Hooks will take over for session_id and state updates
   if (socketPath) {
-    await reportAgentSessionSocket();
-    await reportStateSocket("idle", "Vibe ready");
+    await Promise.all([reportAgentSessionSocket(), reportStateSocket("idle", "Vibe ready")]);
   } else {
     // Fallback to CLI if socket not available
     reportAgentSession();
