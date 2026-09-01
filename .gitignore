@@ -39,5 +39,7 @@ __pycache__/
 .lefthook/
 
 # pnpm
-pnpm-lock.yaml
 .package.json.swp
+
+# npm (this project uses pnpm; see pnpm-workspace.yaml)
+package-lock.json
