@@ -43,3 +43,29 @@ install = "pnpm install -r"
 # Development
 "dev" = "cd adapter && pnpm dev"
 "test" = "cd adapter && pnpm test"
+
+# ==========================================================================
+# COVERAGE TASKS
+# ==========================================================================
+# TypeScript coverage - locked at current baseline (2026-09-01)
+#   Statements: 34.12% (72/211) - CANNOT go below
+#   Branches: 63.15% (12/19) - CANNOT go below
+#   Functions: 53.84% (7/13) - CANNOT go below
+#   Lines: 34.12% (72/211) - CANNOT go below
+# ==========================================================================
+
+# TypeScript: Run tests with coverage (thresholds enforced by vitest.config.ts)
+# Current baseline (2026-09-01): Statements 34.12%, Branches 63.15%, Functions 53.84%, Lines 34.12%
+# Locked in - CANNOT go below
+"test:ts:coverage" = "cd adapter && pnpm test:coverage"
+
+# Python: Run unit tests with coverage
+# Current baseline (2026-09-01): 40.65% overall
+# Locked in - CANNOT go below
+"test:py:coverage" = "cd adapter && python3 -m pytest tests/ --cov=herdr_agent_state --cov=install --cov-report=term-missing --cov-report=html --cov-fail-under=40"
+
+# Full coverage check - both TS and Python
+"test:coverage" = "mise run test:ts:coverage && mise run test:py:coverage"
+
+# CI-like full check with coverage
+"ci" = "mise run typecheck && mise run lint && mise run build && mise run test:coverage"

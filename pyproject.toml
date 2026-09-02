@@ -15,6 +15,8 @@ authors = []
 dev = [
     "mypy==2.3.1",
     "ruff==0.16.5",
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
 ]
 
 [tool.mypy]
@@ -64,3 +66,20 @@ select = ["F", "ANN", "F403"]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["adapter"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+]
+# Baseline (2026-09-01): 40.65% overall coverage
+# Locked in - CANNOT go below this number
+fail_under = 40
+
+[tool.coverage.html]
+directory = "coverage"
